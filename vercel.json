@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "pages/api/generate-page.js": {
+      "maxDuration": 60
+    },
+    "pages/api/analyze-photo.js": {
+      "maxDuration": 30
+    },
+    "pages/api/create-pdf.js": {
+      "maxDuration": 30
+    }
+  }
+}
