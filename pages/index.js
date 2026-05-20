@@ -215,8 +215,10 @@ export default function Home() {
       });
 
       if (!analyzeRes.ok) {
-        const err = await analyzeRes.json();
-        throw new Error(err.error || 'Failed to analyze photo');
+        const txt = await analyzeRes.text();
+        let msg = 'Failed to analyze photo';
+        try { msg = JSON.parse(txt).error || msg; } catch(e) { msg = txt.slice(0, 120); }
+        throw new Error(msg);
       }
 
       const { descriptor: desc } = await analyzeRes.json();
@@ -255,7 +257,7 @@ export default function Home() {
             if (!genRes.ok) {
               const txt = await genRes.text();
               let msg = 'Generation failed';
-              try { msg = JSON.parse(txt).error || msg; } catch(e) { msg = txt.slice(0, 150); }
+              try { msg = JSON.parse(txt).error || msg; } catch(e) { msg = txt.slice(0, 120); }
               throw new Error(msg);
             }
 
@@ -286,39 +288,49 @@ export default function Home() {
         setProgress(18 + Math.round(((i + 1) / scenes.length) * 65));
       }
 
-      // ── Step 3: Assemble PDF ──────────────────────────────────────────────
+      // ── Step 3: Build PDF in the browser — no server round-trip ─────────
       setProgress(88);
       setProgressMsg('Assembling your print-ready PDF...');
 
-      // Send only real (non-placeholder) images, strip b64 to save payload size
-      const realImages = generatedImages
-        .filter(img => img && img.b64 && !img.isPlaceholder)
-        .map(img => ({ b64: img.b64 }));
+      const realImages = generatedImages.filter(img => img && img.b64 && !img.isPlaceholder);
+      if (realImages.length === 0) throw new Error('No images generated');
 
-      if (realImages.length === 0) throw new Error('No images were generated successfully');
+      // Import pdf-lib from CDN — runs entirely client-side, no payload limit
+      const pdfLibModule = await import('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.esm.min.js');
+      const { PDFDocument, rgb } = pdfLibModule;
 
-      const pdfRes = await fetch('/api/create-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          images: realImages,
-          childName,
-          theme: selectedTheme.label,
-          pageCount: scenes.length,
-        }),
-      });
+      const pdfDoc = await PDFDocument.create();
+      const W = 612, H = 792, M = 36;
+      const imgSize = Math.min(W - M * 2, H - M * 2 - 60);
+      const imgX = M + (W - M * 2 - imgSize) / 2;
+      const imgY = M + 24;
 
-      if (!pdfRes.ok) {
-        const txt = await pdfRes.text();
-        let msg = 'Failed to create PDF';
-        try { msg = JSON.parse(txt).error || msg; } catch(e) { msg = txt.slice(0, 150); }
-        throw new Error(msg);
+      // Cover
+      const cover = pdfDoc.addPage([W, H]);
+      cover.drawRectangle({ x: M, y: M, width: W-M*2, height: H-M*2, borderColor: rgb(0.9,0.6,0.2), borderWidth: 2 });
+      cover.drawRectangle({ x: M+6, y: M+6, width: W-M*2-12, height: H-M*2-12, borderColor: rgb(0.9,0.7,0.3), borderWidth: 0.5 });
+
+      // One page per image
+      for (let i = 0; i < realImages.length; i++) {
+        const page = pdfDoc.addPage([W, H]);
+        try {
+          const imgBytes = Uint8Array.from(atob(realImages[i].b64), c => c.charCodeAt(0));
+          const pngImg = await pdfDoc.embedPng(imgBytes);
+          page.drawImage(pngImg, { x: imgX, y: imgY, width: imgSize, height: imgSize });
+        } catch(e) { console.error('Page', i+1, 'embed error:', e.message); }
+        page.drawRectangle({ x: imgX-2, y: imgY-2, width: imgSize+4, height: imgSize+4, borderColor: rgb(0.85,0.85,0.85), borderWidth: 0.5 });
       }
 
-      const { pdfBase64: pdf } = await pdfRes.json();
+      const pdfBytes = await pdfDoc.save();
+      // Convert Uint8Array to base64 safely
+      let binary = '';
+      const bytes = new Uint8Array(pdfBytes);
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      const pdf = btoa(binary);
+
       setPdfBase64(pdf);
       setProgress(100);
-      setProgressMsg(`Done! ${scenes.length} pages ready to print.`);
+      setProgressMsg('Done! ' + realImages.length + ' pages ready to print.');
       setDone(true);
 
     } catch (err) {
