@@ -141,11 +141,24 @@ export default function Home() {
   const handleFile = useCallback((file) => {
     if (!file || !file.type.startsWith('image/')) return;
     setPhoto(file);
-    setPhotoMime(file.type);
+    setPhotoMime('image/jpeg');
+
+    // Resize to max 512px and compress to keep payload small for Vercel
     const reader = new FileReader();
     reader.onload = (e) => {
-      const base64 = e.target.result.split(',')[1];
-      setPhotoBase64(base64);
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 512;
+        let w = img.width, h = img.height;
+        if (w > h && w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+        else if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const compressed = canvas.toDataURL('image/jpeg', 0.85);
+        setPhotoBase64(compressed.split(',')[1]);
+      };
+      img.src = e.target.result;
     };
     reader.readAsDataURL(file);
     setStep(s => Math.max(s, 2));
