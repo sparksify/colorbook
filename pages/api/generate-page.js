@@ -50,14 +50,14 @@ Make the child recognizable as the specific child in the reference photo — not
         image: imageFile,
         prompt,
         n: 1,
-        size: '1024x1024',
+        size: '1024x1792',
       });
     } else {
       response = await openai.images.generate({
         model: 'gpt-image-1',
         prompt: `${prompt}\n\nCharacter description: ${characterDescriptor}`,
         n: 1,
-        size: '1024x1024',
+        size: '1024x1792',
       });
     }
 
