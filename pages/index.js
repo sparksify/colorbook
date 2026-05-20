@@ -141,23 +141,11 @@ export default function Home() {
   const handleFile = useCallback((file) => {
     if (!file || !file.type.startsWith('image/')) return;
     setPhoto(file);
-    setPhotoMime('image/jpeg');
-    // Crop to square center, resize to 256x256, compress to ~15-20KB
-    // Small enough to send with every API request without hitting limits
+    setPhotoMime(file.type);
     const reader = new FileReader();
     reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const SIZE = 256;
-        const minDim = Math.min(img.width, img.height);
-        const sx = (img.width - minDim) / 2;
-        const sy = (img.height - minDim) / 2;
-        const canvas = document.createElement('canvas');
-        canvas.width = SIZE; canvas.height = SIZE;
-        canvas.getContext('2d').drawImage(img, sx, sy, minDim, minDim, 0, 0, SIZE, SIZE);
-        setPhotoBase64(canvas.toDataURL('image/jpeg', 0.80).split(',')[1]);
-      };
-      img.src = e.target.result;
+      const base64 = e.target.result.split(',')[1];
+      setPhotoBase64(base64);
     };
     reader.readAsDataURL(file);
     setStep(s => Math.max(s, 2));
@@ -265,16 +253,18 @@ export default function Home() {
             });
 
             if (!genRes.ok) {
-              const err = await genRes.json();
-              throw new Error(err.error || 'Generation failed');
+              const txt = await genRes.text();
+              let msg = 'Generation failed';
+              try { msg = JSON.parse(txt).error || msg; } catch(e) { msg = txt.slice(0, 150); }
+              throw new Error(msg);
             }
 
-            const { b64, url } = await genRes.json();
-            const imageData = b64 || null;
+            const genData = await genRes.json();
+            const imageData = genData.b64 || null;
 
             if (imageData) {
               updatePageImage(i, imageData);
-              generatedImages.push({ b64: imageData, url });
+              generatedImages.push({ b64: imageData });
               updatePageStatus(i, 'done');
               success = true;
             } else {
@@ -300,11 +290,18 @@ export default function Home() {
       setProgress(88);
       setProgressMsg('Assembling your print-ready PDF...');
 
+      // Send only real (non-placeholder) images, strip b64 to save payload size
+      const realImages = generatedImages
+        .filter(img => img && img.b64 && !img.isPlaceholder)
+        .map(img => ({ b64: img.b64 }));
+
+      if (realImages.length === 0) throw new Error('No images were generated successfully');
+
       const pdfRes = await fetch('/api/create-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          images: generatedImages,
+          images: realImages,
           childName,
           theme: selectedTheme.label,
           pageCount: scenes.length,
@@ -312,8 +309,10 @@ export default function Home() {
       });
 
       if (!pdfRes.ok) {
-        const err = await pdfRes.json();
-        throw new Error(err.error || 'Failed to create PDF');
+        const txt = await pdfRes.text();
+        let msg = 'Failed to create PDF';
+        try { msg = JSON.parse(txt).error || msg; } catch(e) { msg = txt.slice(0, 150); }
+        throw new Error(msg);
       }
 
       const { pdfBase64: pdf } = await pdfRes.json();
