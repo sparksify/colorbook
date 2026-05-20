@@ -72,7 +72,7 @@ function PageThumbnail({ index, scene, status, b64 }) {
         <img
           src={`data:image/png;base64,${b64}`}
           alt={`Page ${index + 1}`}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', filter: status === 'placeholder' ? 'blur(6px) brightness(1.1)' : 'none' }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', filter: status === 'placeholder' ? 'blur(5px) brightness(1.05)' : 'none', transition: 'filter 0.3s' }}
         />
       ) : (
         <div style={{
@@ -215,10 +215,8 @@ export default function Home() {
       });
 
       if (!analyzeRes.ok) {
-        const text = await analyzeRes.text();
-        let msg = 'Failed to analyze photo';
-        try { msg = JSON.parse(text).error || msg; } catch(e) { msg = text.slice(0, 200); }
-        throw new Error(msg);
+        const err = await analyzeRes.json();
+        throw new Error(err.error || 'Failed to analyze photo');
       }
 
       const { descriptor: desc } = await analyzeRes.json();
@@ -227,9 +225,7 @@ export default function Home() {
       setProgressMsg('Character extracted! Building scene prompts...');
       await sleep(400);
 
-      // ── Step 2: Generate pages ────────────────────────────────────────────
-      // Only generate page 1 for real. Remaining pages use a blurred
-      // copy of page 1 as a preview placeholder to save API credits.
+      // ── Step 2: Generate page 1 for real, rest are blurred previews ─────
       const generatedImages = [];
 
       for (let i = 0; i < scenes.length; i++) {
@@ -238,8 +234,7 @@ export default function Home() {
         updatePageStatus(i, 'generating');
 
         if (i === 0) {
-          // Generate the first page for real
-          setProgressMsg(`Generating sample page...`);
+          setProgressMsg('Generating your personalized sample page...');
           let attempts = 0;
           let success = false;
 
@@ -253,14 +248,14 @@ export default function Home() {
                   scene: scenes[i],
                   complexityModifier: selectedComplexity.promptModifier,
                   childName,
-                  imageBase64: photoBase64,
-                  mimeType: photoMime,
                 }),
               });
 
               if (!genRes.ok) {
                 const text = await genRes.text();
-                throw new Error(text.slice(0, 200));
+                let msg = 'Generation failed';
+                try { msg = JSON.parse(text).error || msg; } catch(e) { msg = text.slice(0, 150); }
+                throw new Error(msg);
               }
 
               const data = await genRes.json();
@@ -284,24 +279,24 @@ export default function Home() {
             }
           }
         } else {
-          // Use first page image as blurred placeholder for remaining pages
-          await sleep(400);
+          // Blurred preview using page 1 image
+          await sleep(300);
           setProgressMsg(`Preparing page ${i + 1} preview...`);
           const firstB64 = generatedImages[0]?.b64 || null;
           generatedImages.push({ b64: firstB64, isPlaceholder: true });
           updatePageImage(i, firstB64);
-          updatePageStatus(i, 'done');
+          updatePageStatus(i, 'placeholder');
         }
 
         setProgress(18 + Math.round(((i + 1) / scenes.length) * 65));
       }
 
-      // ── Step 3: Assemble PDF ──────────────────────────────────────────────
+      // ── Step 3: Assemble PDF (real pages only) ───────────────────────────
       setProgress(88);
       setProgressMsg('Assembling your print-ready PDF...');
 
-      // Only send real (non-placeholder) images to PDF
       const realImages = generatedImages.filter(img => img.b64 && !img.isPlaceholder);
+
       const pdfRes = await fetch('/api/create-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -410,9 +405,12 @@ export default function Home() {
                       ✓ Photo ready — AI will extract character features
                     </p>
                     {descriptor && (
-                      <p style={{ fontSize: 11, color: '#4ade80', margin: '4px 0 0', fontStyle: 'italic', color: '#15803d' }}>
-                        "{descriptor.slice(0, 90)}..."
-                      </p>
+                      <details style={{ marginTop: 6 }}>
+                        <summary style={{ fontSize: 11, color: '#15803d', fontWeight: 700, cursor: 'pointer' }}>✓ Character captured — click to review</summary>
+                        <p style={{ fontSize: 11, color: '#15803d', margin: '4px 0 0', fontStyle: 'italic', lineHeight: 1.5 }}>
+                          {descriptor}
+                        </p>
+                      </details>
                     )}
                   </div>
                   <button

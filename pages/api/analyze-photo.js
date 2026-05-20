@@ -22,7 +22,7 @@ export default async function handler(req, res) {
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
-      max_tokens: 400,
+      max_tokens: 600,
       messages: [
         {
           role: 'user',
@@ -36,16 +36,20 @@ export default async function handler(req, res) {
             },
             {
               type: 'text',
-              text: `Describe this child's physical appearance precisely for use as a character descriptor in illustration prompts. Include:
-- Approximate age (e.g. "approximately 6-7 years old")
-- Hair: color, length, style (spiky, curly, straight, braided, etc.)
-- Eyes: shape and any notable features
-- Skin tone: use descriptive terms (light, medium, warm brown, dark, olive, etc.)
-- Glasses: yes or no, and if yes describe frame style and color
-- Any distinctive features: dimples, freckles, birthmarks, etc.
-- Build: small/average/sturdy for their age
+              text: `You are creating a character sheet for a children's coloring book illustrator. Describe this child's appearance with extreme precision so an illustrator can draw them consistently across multiple scenes.
 
-Output ONLY the descriptor as a single paragraph. No preamble, no explanation. Start directly with "A child approximately..."`,
+Be very specific about:
+- HAIR: exact color (e.g. jet black, dark brown, golden blonde), length, style (mohawk, spiky, curly, straight, braided, bun), any unique styling
+- FACE SHAPE: round, oval, square, heart-shaped
+- EYES: shape (almond, round, wide), size, any distinctive features
+- SKIN TONE: very light, light, medium, olive, medium-brown, dark brown, deep
+- GLASSES: yes or no - if yes: frame shape (round, rectangular, square, cat-eye), frame color/material, lens size
+- DISTINCTIVE FEATURES: dimples, freckles, birthmarks, prominent ears, gap in teeth, chubby cheeks, strong jawline - be specific
+- BUILD: slim, average, chubby, tall for age
+- AGE APPEARANCE: looks approximately X years old
+- CLOTHING visible: describe shirt/top style and any text or graphics on it
+
+Output as a single detailed paragraph starting with "A child who appears approximately [age] years old with". Be specific enough that two different illustrators would draw the same child.`,
             },
           ],
         },
