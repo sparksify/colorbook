@@ -72,7 +72,7 @@ function PageThumbnail({ index, scene, status, b64 }) {
         <img
           src={`data:image/png;base64,${b64}`}
           alt={`Page ${index + 1}`}
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', filter: status === 'placeholder' ? 'blur(6px) brightness(1.1)' : 'none' }}
         />
       ) : (
         <div style={{
@@ -141,24 +141,11 @@ export default function Home() {
   const handleFile = useCallback((file) => {
     if (!file || !file.type.startsWith('image/')) return;
     setPhoto(file);
-    setPhotoMime('image/jpeg');
-
-    // Resize to max 512px and compress to keep payload small for Vercel
+    setPhotoMime(file.type);
     const reader = new FileReader();
     reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const MAX = 512;
-        let w = img.width, h = img.height;
-        if (w > h && w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
-        else if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        const compressed = canvas.toDataURL('image/jpeg', 0.85);
-        setPhotoBase64(compressed.split(',')[1]);
-      };
-      img.src = e.target.result;
+      const base64 = e.target.result.split(',')[1];
+      setPhotoBase64(base64);
     };
     reader.readAsDataURL(file);
     setStep(s => Math.max(s, 2));
@@ -228,8 +215,10 @@ export default function Home() {
       });
 
       if (!analyzeRes.ok) {
-        const err = await analyzeRes.json();
-        throw new Error(err.error || 'Failed to analyze photo');
+        const text = await analyzeRes.text();
+        let msg = 'Failed to analyze photo';
+        try { msg = JSON.parse(text).error || msg; } catch(e) { msg = text.slice(0, 200); }
+        throw new Error(msg);
       }
 
       const { descriptor: desc } = await analyzeRes.json();
@@ -238,60 +227,70 @@ export default function Home() {
       setProgressMsg('Character extracted! Building scene prompts...');
       await sleep(400);
 
-      // ── Step 2: Generate pages one at a time ─────────────────────────────
+      // ── Step 2: Generate pages ────────────────────────────────────────────
+      // Only generate page 1 for real. Remaining pages use a blurred
+      // copy of page 1 as a preview placeholder to save API credits.
       const generatedImages = [];
 
       for (let i = 0; i < scenes.length; i++) {
         const pct = 18 + Math.round(((i + 0.5) / scenes.length) * 65);
         setProgress(pct);
-        setProgressMsg(`Generating page ${i + 1} of ${scenes.length}...`);
         updatePageStatus(i, 'generating');
 
-        let attempts = 0;
-        let success = false;
+        if (i === 0) {
+          // Generate the first page for real
+          setProgressMsg(`Generating sample page...`);
+          let attempts = 0;
+          let success = false;
 
-        while (attempts < 2 && !success) {
-          try {
-            const genRes = await fetch('/api/generate-page', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                characterDescriptor: desc,
-                scene: scenes[i],
-                complexityModifier: selectedComplexity.promptModifier,
-                childName,
-                imageBase64: photoBase64,
-                mimeType: photoMime,
-              }),
-            });
+          while (attempts < 2 && !success) {
+            try {
+              const genRes = await fetch('/api/generate-page', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  characterDescriptor: desc,
+                  scene: scenes[i],
+                  complexityModifier: selectedComplexity.promptModifier,
+                  childName,
+                  imageBase64: photoBase64,
+                  mimeType: photoMime,
+                }),
+              });
 
-            if (!genRes.ok) {
-              const err = await genRes.json();
-              throw new Error(err.error || 'Generation failed');
-            }
+              if (!genRes.ok) {
+                const text = await genRes.text();
+                throw new Error(text.slice(0, 200));
+              }
 
-            const { b64, url } = await genRes.json();
-            const imageData = b64 || null;
-
-            if (imageData) {
-              updatePageImage(i, imageData);
-              generatedImages.push({ b64: imageData, url });
-              updatePageStatus(i, 'done');
-              success = true;
-            } else {
-              throw new Error('No image data returned');
-            }
-          } catch (pageError) {
-            attempts++;
-            if (attempts >= 2) {
-              console.error(`Page ${i + 1} failed after 2 attempts:`, pageError);
-              updatePageStatus(i, 'error');
-              generatedImages.push({ b64: null, url: null });
-              success = true; // move on
-            } else {
-              await sleep(2000); // wait before retry
+              const data = await genRes.json();
+              if (data.b64) {
+                updatePageImage(i, data.b64);
+                generatedImages.push({ b64: data.b64 });
+                updatePageStatus(i, 'done');
+                success = true;
+              } else {
+                throw new Error('No image data returned');
+              }
+            } catch (pageError) {
+              attempts++;
+              if (attempts >= 2) {
+                updatePageStatus(i, 'error');
+                generatedImages.push({ b64: null });
+                success = true;
+              } else {
+                await sleep(2000);
+              }
             }
           }
+        } else {
+          // Use first page image as blurred placeholder for remaining pages
+          await sleep(400);
+          setProgressMsg(`Preparing page ${i + 1} preview...`);
+          const firstB64 = generatedImages[0]?.b64 || null;
+          generatedImages.push({ b64: firstB64, isPlaceholder: true });
+          updatePageImage(i, firstB64);
+          updatePageStatus(i, 'done');
         }
 
         setProgress(18 + Math.round(((i + 1) / scenes.length) * 65));
@@ -301,11 +300,13 @@ export default function Home() {
       setProgress(88);
       setProgressMsg('Assembling your print-ready PDF...');
 
+      // Only send real (non-placeholder) images to PDF
+      const realImages = generatedImages.filter(img => img.b64 && !img.isPlaceholder);
       const pdfRes = await fetch('/api/create-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          images: generatedImages,
+          images: realImages.length > 0 ? realImages : generatedImages,
           childName,
           theme: selectedTheme.label,
           pageCount: scenes.length,
