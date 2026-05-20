@@ -33,15 +33,21 @@ Detail level: ${complexityModifier || 'moderate detail with a fun background'}.
 
 Keep the character appearance consistent with the description above.`;
 
+    // Generate image - returns URL
     const response = await openai.images.generate({
       model: 'dall-e-3',
       prompt,
       n: 1,
       size: '1024x1024',
-      response_format: 'b64_json',
     });
 
-    const b64 = response.data[0].b64_json;
+    const url = response.data[0].url;
+
+    // Fetch the image and convert to base64 for PDF embedding
+    const imgRes = await fetch(url);
+    const arrayBuffer = await imgRes.arrayBuffer();
+    const b64 = Buffer.from(arrayBuffer).toString('base64');
+
     return res.status(200).json({ b64 });
 
   } catch (error) {
