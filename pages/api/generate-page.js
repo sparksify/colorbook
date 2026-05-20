@@ -33,22 +33,30 @@ Detail level: ${complexityModifier || 'moderate detail with a fun background'}.
 
 Keep the character appearance consistent with the description above.`;
 
-    // Generate image - returns URL
+    // Use gpt-image-1 - the model available on this account
     const response = await openai.images.generate({
-      model: 'dall-e-3',
+      model: 'gpt-image-1',
       prompt,
       n: 1,
       size: '1024x1024',
     });
 
-    const url = response.data[0].url;
+    const imageData = response.data[0];
+    
+    // gpt-image-1 returns b64_json directly
+    if (imageData.b64_json) {
+      return res.status(200).json({ b64: imageData.b64_json });
+    }
+    
+    // Fallback: fetch from URL if provided
+    if (imageData.url) {
+      const imgRes = await fetch(imageData.url);
+      const arrayBuffer = await imgRes.arrayBuffer();
+      const b64 = Buffer.from(arrayBuffer).toString('base64');
+      return res.status(200).json({ b64 });
+    }
 
-    // Fetch the image and convert to base64 for PDF embedding
-    const imgRes = await fetch(url);
-    const arrayBuffer = await imgRes.arrayBuffer();
-    const b64 = Buffer.from(arrayBuffer).toString('base64');
-
-    return res.status(200).json({ b64 });
+    throw new Error('No image data returned');
 
   } catch (error) {
     console.error('Generate page error:', error?.message);
