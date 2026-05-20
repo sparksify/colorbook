@@ -9,6 +9,11 @@ export const config = {
   },
 };
 
+// Strip emojis and non-latin characters that WinAnsi font can't encode
+function safe(str) {
+  return (str || '').replace(/[^\x00-\xFF]/g, '').replace(/\s+/g, ' ').trim();
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -36,9 +41,9 @@ export default async function handler(req, res) {
     const imageX = margin + (imageAreaWidth - imageSize) / 2;
     const imageY = margin + footerHeight;
 
-    const bookTitle = childName
+    const bookTitle = safe(childName
       ? `${childName}'s ${theme} Adventure`
-      : `My ${theme} Adventure`;
+      : `My ${theme} Adventure`);
 
     for (let i = 0; i < images.length; i++) {
       const { b64, url } = images[i];
@@ -113,7 +118,7 @@ export default async function handler(req, res) {
       });
 
       // Footer: coloring prompt
-      const prompt = 'Color this page however you like! 🖍️';
+      const prompt = 'Color this page however you like!';
       page.drawText(prompt, {
         x: margin,
         y: margin,
@@ -154,7 +159,7 @@ export default async function handler(req, res) {
     });
 
     if (childName) {
-      coverPage.drawText(`Created for ${childName}`, {
+      coverPage.drawText(safe(`Created for ${childName}`), {
         x: pageWidth / 2 - (childName.length * 4 + 60),
         y: pageHeight / 2 + 30,
         size: 18,
@@ -163,7 +168,7 @@ export default async function handler(req, res) {
       });
     }
 
-    coverPage.drawText(theme.toUpperCase() + ' ADVENTURE', {
+    coverPage.drawText(safe(theme.toUpperCase() + ' ADVENTURE'), {
       x: pageWidth / 2 - (theme.length * 5 + 50),
       y: pageHeight / 2 - 10,
       size: 16,
