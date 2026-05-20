@@ -72,7 +72,7 @@ function PageThumbnail({ index, scene, status, b64 }) {
         <img
           src={`data:image/png;base64,${b64}`}
           alt={`Page ${index + 1}`}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', filter: status === 'placeholder' ? 'blur(5px) brightness(1.05)' : 'none', transition: 'filter 0.3s' }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
       ) : (
         <div style={{
@@ -141,11 +141,23 @@ export default function Home() {
   const handleFile = useCallback((file) => {
     if (!file || !file.type.startsWith('image/')) return;
     setPhoto(file);
-    setPhotoMime(file.type);
+    setPhotoMime('image/jpeg');
+    // Crop to square center, resize to 256x256, compress to ~15-20KB
+    // Small enough to send with every API request without hitting limits
     const reader = new FileReader();
     reader.onload = (e) => {
-      const base64 = e.target.result.split(',')[1];
-      setPhotoBase64(base64);
+      const img = new Image();
+      img.onload = () => {
+        const SIZE = 256;
+        const minDim = Math.min(img.width, img.height);
+        const sx = (img.width - minDim) / 2;
+        const sy = (img.height - minDim) / 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = SIZE; canvas.height = SIZE;
+        canvas.getContext('2d').drawImage(img, sx, sy, minDim, minDim, 0, 0, SIZE, SIZE);
+        setPhotoBase64(canvas.toDataURL('image/jpeg', 0.80).split(',')[1]);
+      };
+      img.src = e.target.result;
     };
     reader.readAsDataURL(file);
     setStep(s => Math.max(s, 2));
@@ -225,83 +237,74 @@ export default function Home() {
       setProgressMsg('Character extracted! Building scene prompts...');
       await sleep(400);
 
-      // ── Step 2: Generate page 1 for real, rest are blurred previews ─────
+      // ── Step 2: Generate pages one at a time ─────────────────────────────
       const generatedImages = [];
 
       for (let i = 0; i < scenes.length; i++) {
         const pct = 18 + Math.round(((i + 0.5) / scenes.length) * 65);
         setProgress(pct);
+        setProgressMsg(`Generating page ${i + 1} of ${scenes.length}...`);
         updatePageStatus(i, 'generating');
 
-        if (i === 0) {
-          setProgressMsg('Generating your personalized sample page...');
-          let attempts = 0;
-          let success = false;
+        let attempts = 0;
+        let success = false;
 
-          while (attempts < 2 && !success) {
-            try {
-              const genRes = await fetch('/api/generate-page', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  characterDescriptor: desc,
-                  scene: scenes[i],
-                  complexityModifier: selectedComplexity.promptModifier,
-                  childName,
-                }),
-              });
+        while (attempts < 2 && !success) {
+          try {
+            const genRes = await fetch('/api/generate-page', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                characterDescriptor: desc,
+                scene: scenes[i],
+                complexityModifier: selectedComplexity.promptModifier,
+                childName,
+                imageBase64: photoBase64,
+                mimeType: photoMime,
+              }),
+            });
 
-              if (!genRes.ok) {
-                const text = await genRes.text();
-                let msg = 'Generation failed';
-                try { msg = JSON.parse(text).error || msg; } catch(e) { msg = text.slice(0, 150); }
-                throw new Error(msg);
-              }
+            if (!genRes.ok) {
+              const err = await genRes.json();
+              throw new Error(err.error || 'Generation failed');
+            }
 
-              const data = await genRes.json();
-              if (data.b64) {
-                updatePageImage(i, data.b64);
-                generatedImages.push({ b64: data.b64 });
-                updatePageStatus(i, 'done');
-                success = true;
-              } else {
-                throw new Error('No image data returned');
-              }
-            } catch (pageError) {
-              attempts++;
-              if (attempts >= 2) {
-                updatePageStatus(i, 'error');
-                generatedImages.push({ b64: null });
-                success = true;
-              } else {
-                await sleep(2000);
-              }
+            const { b64, url } = await genRes.json();
+            const imageData = b64 || null;
+
+            if (imageData) {
+              updatePageImage(i, imageData);
+              generatedImages.push({ b64: imageData, url });
+              updatePageStatus(i, 'done');
+              success = true;
+            } else {
+              throw new Error('No image data returned');
+            }
+          } catch (pageError) {
+            attempts++;
+            if (attempts >= 2) {
+              console.error(`Page ${i + 1} failed after 2 attempts:`, pageError);
+              updatePageStatus(i, 'error');
+              generatedImages.push({ b64: null, url: null });
+              success = true; // move on
+            } else {
+              await sleep(2000); // wait before retry
             }
           }
-        } else {
-          // Blurred preview using page 1 image
-          await sleep(300);
-          setProgressMsg(`Preparing page ${i + 1} preview...`);
-          const firstB64 = generatedImages[0]?.b64 || null;
-          generatedImages.push({ b64: firstB64, isPlaceholder: true });
-          updatePageImage(i, firstB64);
-          updatePageStatus(i, 'placeholder');
         }
 
         setProgress(18 + Math.round(((i + 1) / scenes.length) * 65));
       }
 
-      // ── Step 3: Assemble PDF (real pages only) ───────────────────────────
+      // ── Step 3: Assemble PDF ──────────────────────────────────────────────
       setProgress(88);
       setProgressMsg('Assembling your print-ready PDF...');
-
-      const realImages = generatedImages.filter(img => img.b64 && !img.isPlaceholder);
 
       const pdfRes = await fetch('/api/create-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          images: realImages.length > 0 ? realImages : generatedImages,
+          images: generatedImages,
           childName,
           theme: selectedTheme.label,
           pageCount: scenes.length,
@@ -405,12 +408,9 @@ export default function Home() {
                       ✓ Photo ready — AI will extract character features
                     </p>
                     {descriptor && (
-                      <details style={{ marginTop: 6 }}>
-                        <summary style={{ fontSize: 11, color: '#15803d', fontWeight: 700, cursor: 'pointer' }}>✓ Character captured — click to review</summary>
-                        <p style={{ fontSize: 11, color: '#15803d', margin: '4px 0 0', fontStyle: 'italic', lineHeight: 1.5 }}>
-                          {descriptor}
-                        </p>
-                      </details>
+                      <p style={{ fontSize: 11, color: '#4ade80', margin: '4px 0 0', fontStyle: 'italic', color: '#15803d' }}>
+                        "{descriptor.slice(0, 90)}..."
+                      </p>
                     )}
                   </div>
                   <button

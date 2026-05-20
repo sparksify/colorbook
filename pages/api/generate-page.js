@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 
 export const config = {
   api: {
-    bodyParser: { sizeLimit: '4mb' },
+    bodyParser: { sizeLimit: '6mb' },
     responseLimit: '20mb',
   },
 };
@@ -13,7 +13,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   try {
-    const { characterDescriptor, scene, complexityModifier, childName } = req.body;
+    const { characterDescriptor, scene, complexityModifier, childName, imageBase64, mimeType } = req.body;
 
     if (!characterDescriptor || !scene) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -21,36 +21,45 @@ export default async function handler(req, res) {
 
     const nameClause = childName ? `The child's name is ${childName}. ` : '';
 
-    const prompt = `Create a black and white children's coloring book illustration page.
+    const prompt = `Transform the child shown in the reference photo into a black and white coloring book illustration character.
 
-STYLE REQUIREMENTS:
-- Pure black outlines on white background only
-- No gray fills, no shading, no color anywhere
-- Thick bold lines suitable for coloring in
-- Comic book / cartoon illustration style
-- Every region clearly bounded and ready to color
+CRITICAL: The child in the reference photo must be the character in this illustration. Preserve their exact appearance:
+- Their specific hair style (mohawk, spiky, curly, straight etc) exactly as shown
+- Their face shape, eye shape, and facial features
+- Any glasses, necklace, or accessories
+- Their skin tone represented through line art shading patterns if needed
 
-CHARACTER (must appear exactly as described - this is the most important part):
-${characterDescriptor}
-
-CRITICAL CHARACTER DETAILS TO PRESERVE:
-- If they have a mohawk: draw it as a tall strip of hair down the center of the head, shaved sides
-- If they have glasses: draw frames exactly as described on their face
-- If they have a birthmark or distinctive feature: include it
-- The child's face structure, hair, and distinguishing features must be immediately recognizable
+STYLE: Pure black outlines on white background only. No color, no gray fills, no shading. Bold clean lines. Comic book coloring page style. Every area clearly bounded for coloring in.
 
 ${nameClause}SCENE: The child is ${scene}.
 
-COMPOSITION: Child is the main hero, large and prominent in the foreground, shown with excitement and joy. ${complexityModifier || 'Include a detailed background with the scene setting'}.
+${complexityModifier || 'Include a fun detailed background setting'}.
 
-Draw this specific child — not a generic child. Their distinctive appearance is the entire point of this illustration.`;
+Make the child recognizable as the specific child in the reference photo — not a generic cartoon child.`;
 
-    const response = await openai.images.generate({
-      model: 'gpt-image-1',
-      prompt,
-      n: 1,
-      size: '1024x1024',
-    });
+    let response;
+
+    if (imageBase64) {
+      // Send compressed reference photo for visual anchoring
+      const imageBuffer = Buffer.from(imageBase64, 'base64');
+      const blob = new Blob([imageBuffer], { type: mimeType || 'image/jpeg' });
+      const imageFile = new File([blob], 'reference.jpg', { type: mimeType || 'image/jpeg' });
+
+      response = await openai.images.edit({
+        model: 'gpt-image-1',
+        image: imageFile,
+        prompt,
+        n: 1,
+        size: '1024x1024',
+      });
+    } else {
+      response = await openai.images.generate({
+        model: 'gpt-image-1',
+        prompt: `${prompt}\n\nCharacter description: ${characterDescriptor}`,
+        n: 1,
+        size: '1024x1024',
+      });
+    }
 
     const imageData = response.data[0];
 
