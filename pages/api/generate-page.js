@@ -31,16 +31,13 @@ Scene: The child is ${scene}.
 
 Detail level: ${complexityModifier || 'moderate detail with a fun background'}.
 
-Keep the character's appearance consistent with the description above.`;
+Keep the character appearance consistent with the description above.`;
 
-    // Use dall-e-3 directly — reliable on all paid OpenAI accounts
-    // Returns b64_json so no URL fetching needed
     const response = await openai.images.generate({
       model: 'dall-e-3',
       prompt,
       n: 1,
       size: '1024x1024',
-      quality: 'standard',
       response_format: 'b64_json',
     });
 
@@ -49,8 +46,6 @@ Keep the character's appearance consistent with the description above.`;
 
   } catch (error) {
     console.error('Generate page error:', error?.message);
-    return res.status(500).json({
-      error: error?.message || 'Failed to generate page',
-    });
+    return res.status(500).json({ error: error?.message || 'Failed to generate page' });
   }
 }
