@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 
 export const config = {
   api: {
-    bodyParser: { sizeLimit: '6mb' },
+    bodyParser: { sizeLimit: '4mb' },
     responseLimit: '20mb',
   },
 };
@@ -21,13 +21,13 @@ export default async function handler(req, res) {
 
     const nameClause = childName ? `The child's name is ${childName}. ` : '';
 
-    const prompt = `Transform the child shown in the reference photo into a black and white coloring book illustration character.
+    const prompt = `Transform the child shown in the reference photo into a black and white coloring book illustration.
 
-CRITICAL: The child in the reference photo must be the character in this illustration. Preserve their exact appearance:
-- Their specific hair style (mohawk, spiky, curly, straight etc) exactly as shown
-- Their face shape, eye shape, and facial features
+CRITICAL: Preserve the child's exact appearance from the photo:
+- Hair style exactly as shown (mohawk, spiky, curly, straight, etc.)
+- Face shape and facial features
 - Any glasses, necklace, or accessories
-- Their skin tone represented through line art shading patterns if needed
+- Skin tone represented through line art
 
 STYLE: Pure black outlines on white background only. No color, no gray fills, no shading. Bold clean lines. Comic book coloring page style. Every area clearly bounded for coloring in.
 
@@ -35,12 +35,11 @@ ${nameClause}SCENE: The child is ${scene}.
 
 ${complexityModifier || 'Include a fun detailed background setting'}.
 
-Make the child recognizable as the specific child in the reference photo — not a generic cartoon child.`;
+Make the child recognizable as the specific child in the reference photo.`;
 
     let response;
 
     if (imageBase64) {
-      // Send compressed reference photo for visual anchoring
       const imageBuffer = Buffer.from(imageBase64, 'base64');
       const blob = new Blob([imageBuffer], { type: mimeType || 'image/jpeg' });
       const imageFile = new File([blob], 'reference.jpg', { type: mimeType || 'image/jpeg' });
@@ -50,14 +49,14 @@ Make the child recognizable as the specific child in the reference photo — not
         image: imageFile,
         prompt,
         n: 1,
-        size: '1024x1792',
+        size: '1024x1024', // square — safest supported size for edit endpoint
       });
     } else {
       response = await openai.images.generate({
         model: 'gpt-image-1',
-        prompt: `${prompt}\n\nCharacter description: ${characterDescriptor}`,
+        prompt: `${prompt}\n\nCharacter: ${characterDescriptor}`,
         n: 1,
-        size: '1024x1792',
+        size: '1024x1024',
       });
     }
 
